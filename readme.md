@@ -27,3 +27,45 @@ Includes a toggleable file explorer, ASCII map view, and optional spatial index 
 | `l`       | Toggle layer visibility                 |
 | `q`       | Quit the application                    |
 | `h`       | Show help / keybindings                 |
+
+### Quickstart
+
+1. Install dependencies
+
+```
+go mod tidy
+```
+
+2. Run the app
+
+```
+go run ./cmd/geomap
+```
+
+3. Build (optional)
+
+```
+go build -o geomap ./cmd/geomap
+```
+
+### Usage
+
+```
+geomap
+```
+
+- Run with a spatial file to render on launch:
+
+```
+geomap path/to/file.geojson
+geomap data/points.csv
+geomap samples/placemarks.kml
+```
+
+- Toggle the file explorer with `Tab`. The explorer lists only files in the current working directory (no parent or subdirectories) and filters to supported types.
+
+### Dependencies
+
+- Charmbracelet Bubble Tea
+- Charmbracelet Lipgloss
+- Charmbracelet Bubbles (to be used for components like file picker/viewport)
