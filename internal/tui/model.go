@@ -1,11 +1,12 @@
 package tui
 
 import (
+	"os"
+
 	list "github.com/charmbracelet/bubbles/list"
 	table "github.com/charmbracelet/bubbles/table"
 	textarea "github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
-	"os"
 
 	"goemap/internal/geom"
 )

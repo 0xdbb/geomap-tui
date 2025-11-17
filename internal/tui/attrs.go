@@ -14,6 +14,13 @@ import (
 // refreshAttrsFromCurrent rebuilds the table columns/rows from the currently selected path
 func (m *Model) refreshAttrsFromCurrent() {
 	cols, rows := m.buildAttributes()
+	// If there are no columns or rows, disable attributes view to avoid rendering panics
+	if len(cols) == 0 || len(rows) == 0 {
+		// Do not touch table internals here to avoid re-render during SetColumns
+		m.showAttrs = false
+		m.status = "no attributes for current dataset"
+		return
+	}
 	// map to bubbles table columns/rows
 	tcols := make([]table.Column, 0, len(cols)+1)
 	tcols = append(tcols, table.Column{Title: "#", Width: 4})
@@ -32,15 +39,32 @@ func (m *Model) refreshAttrsFromCurrent() {
 		row = append(row, r...)
 		trows = append(trows, table.Row(row))
 	}
-	m.tbl.SetColumns(tcols)
-	m.tbl.SetRows(trows)
+	// Normalize each row to match the number of table columns
+	colCount := len(tcols)
+	for i := range trows {
+		cells := []string(trows[i])
+		if len(cells) < colCount {
+			// pad
+			pad := make([]string, colCount-len(cells))
+			cells = append(cells, pad...)
+		} else if len(cells) > colCount {
+			// truncate
+			cells = cells[:colCount]
+		}
+		trows[i] = table.Row(cells)
+	}
+    // Avoid transient mismatch: clear rows, set columns, then set rows
+    m.tbl.SetRows(nil)
+    m.tbl.SetColumns(tcols)
+    m.tbl.SetRows(trows)
 }
 
 // buildAttributes inspects the current dataset and returns (columns, rows)
 func (m *Model) buildAttributes() ([]string, [][]string) {
 	p := m.selPath
 	if p == "" {
-		return []string{"lon", "lat"}, [][]string{}
+		// pasted WKT or ephemeral data: no attributes available
+		return []string{}, [][]string{}
 	}
 	ext := strings.ToLower(filepath.Ext(p))
 	switch ext {
@@ -88,6 +112,9 @@ func buildAttrsGeoJSON(path string) ([]string, [][]string) {
 			continue
 		}
 		pm, _ := fm["properties"].(map[string]any)
+		if pm == nil {
+			pm = map[string]any{}
+		}
 		propsList = append(propsList, pm)
 		for k := range pm {
 			if !seen[k] {

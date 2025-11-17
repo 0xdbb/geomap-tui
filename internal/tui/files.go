@@ -60,6 +60,10 @@ func (m *Model) loadPath(p string) {
 			return
 		}
 		m.points, m.lines, m.polygons, m.bbox = d.Points, d.Lines, d.Polygons, d.BBox
+		// prefer polys > lines > points for visibility
+		m.showPolys = len(m.polygons) > 0
+		m.showLines = len(m.lines) > 0 && !m.showPolys
+		m.showPoints = len(m.points) > 0 && !m.showPolys
 		m.status = "loaded: " + filepath.Base(p) +
 			fmt.Sprintf("  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 	case ".csv":
@@ -69,6 +73,9 @@ func (m *Model) loadPath(p string) {
 			return
 		}
 		m.points, m.lines, m.polygons, m.bbox = pts, nil, nil, bb
+		m.showPolys = false
+		m.showLines = false
+		m.showPoints = len(m.points) > 0
 		m.status = "loaded: " + filepath.Base(p) +
 			fmt.Sprintf("  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 	case ".kml":
@@ -92,9 +99,23 @@ func (m *Model) loadPath(p string) {
 			return
 		}
 		m.points, m.lines, m.polygons, m.bbox = d.Points, d.Lines, d.Polygons, d.BBox
+		// prefer polys > lines > points for visibility
+		m.showPolys = len(m.polygons) > 0
+		m.showLines = len(m.lines) > 0 && !m.showPolys
+		m.showPoints = len(m.points) > 0 && !m.showPolys
 		m.status = "loaded: " + filepath.Base(p) +
 			fmt.Sprintf("  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 	default:
 		m.status = "unsupported file: " + ext
+	}
+	// If attributes are currently shown, verify availability for the new dataset
+	if m.showAttrs {
+		cols, rows := m.buildAttributes()
+		if len(cols) == 0 || len(rows) == 0 {
+			m.showAttrs = false
+			m.status = "no attributes for current dataset"
+		} else {
+			m.refreshAttrsFromCurrent()
+		}
 	}
 }

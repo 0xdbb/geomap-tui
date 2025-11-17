@@ -2,12 +2,12 @@
 
 A terminal-based geospatial file viewer in Go.
 
-Visualize GeoJSON, Shapefiles, CSV with coordinates, and KML files directly in your terminal.
+Visualize GeoJSON files directly in your terminal.
 Includes a toggleable file explorer, ASCII map view, and optional spatial index visualization in a separate binary.
 
 ### Features
 
-- View spatial files (.geojson, .shp, .csv, .kml) in ASCII
+- View spatial files (currently supports only .geojson) in ASCII
 
 - Pan and zoom the map directly in terminal
 
@@ -57,15 +57,7 @@ geomap
 - Run with a spatial file to render on launch:
 
 ```
-geomap path/to/file.geojson
-geomap data/points.csv
-geomap samples/placemarks.kml
+geomap spatial_line.geojson
 ```
 
 - Toggle the file explorer with `Tab`. The explorer lists only files in the current working directory (no parent or subdirectories) and filters to supported types.
-
-### Dependencies
-
-- Charmbracelet Bubble Tea
-- Charmbracelet Lipgloss
-- Charmbracelet Bubbles (to be used for components like file picker/viewport)
