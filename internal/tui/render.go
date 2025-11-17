@@ -37,6 +37,9 @@ func (m Model) renderAsciiMap(w, h int) string {
 	// High-resolution braille buffer for crisp lines/edges
 	br := newBrailleBuf(w, h)
 
+	// Collect outline rings for ASCII outline drawing
+	var outlineRings [][][2]int
+
 	// Draw polygons (fill then edges)
 	if m.showPolys && len(m.polygons) > 0 {
 		for _, poly := range m.polygons {
@@ -68,6 +71,8 @@ func (m Model) renderAsciiMap(w, h int) string {
 			if len(rings) == 0 {
 				continue
 			}
+			// Save rings for later ASCII outline drawing
+			outlineRings = append(outlineRings, rings...)
 			// fill using even-odd rule per scanline on outer ring (microgrid, holes ignored for now)
 			if len(ringsMic) > 0 {
 				outerMic := ringsMic[0]
@@ -115,8 +120,8 @@ func (m Model) renderAsciiMap(w, h int) string {
 		}
 	}
 
-	// Draw data points if loaded
-	if m.showPoints && len(m.points) > 0 && m.bbox.MaxX > m.bbox.MinX && m.bbox.MaxY > m.bbox.MinY {
+	// Draw data points if loaded (skip when polygons are shown to avoid clutter)
+	if m.showPoints && (!m.showPolys || len(m.polygons) == 0) && len(m.points) > 0 && m.bbox.MaxX > m.bbox.MinX && m.bbox.MaxY > m.bbox.MinY {
 		for _, p := range m.points {
 			mx, my, ok := m.screenXYMicro(p[0], p[1], w, h)
 			if !ok {
@@ -160,6 +165,17 @@ func (m Model) renderAsciiMap(w, h int) string {
 		}
 		lines[y] = string(base)
 	}
+	// After compositing braille, draw ASCII polygon outlines on top for visibility
+	if len(outlineRings) > 0 {
+		for _, ring := range outlineRings {
+			for i := 0; i < len(ring); i++ {
+				a := ring[i]
+				b := ring[(i+1)%len(ring)]
+				drawLine(&lines, a[0], a[1], b[0], b[1])
+			}
+		}
+	}
+
 	// Hover highlight: draw an orange circle at the hovered vertex cell
 	if m.hovering {
 		cx := m.hoverMicX / 2

@@ -43,7 +43,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.points, m.lines, m.polygons, m.bbox = d.Points, d.Lines, d.Polygons, d.BBox
-				m.status = "rendered WKT"
+				// reset viewport and focus layers for immediate visibility
+				m.zoom = 1.0
+				m.offsetX, m.offsetY = 0, 0
+				m.showPolys = len(m.polygons) > 0 || (strings.HasPrefix(strings.ToUpper(w), "POLYGON"))
+				m.showLines = len(m.lines) > 0 && !m.showPolys
+				m.showPoints = len(m.points) > 0 && !m.showPolys
+				m.status = fmt.Sprintf("rendered WKT  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 				m.pasteMode = false
 				m.ta.Blur()
 				return m, nil

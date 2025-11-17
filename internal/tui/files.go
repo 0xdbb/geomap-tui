@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -59,7 +60,8 @@ func (m *Model) loadPath(p string) {
 			return
 		}
 		m.points, m.lines, m.polygons, m.bbox = d.Points, d.Lines, d.Polygons, d.BBox
-		m.status = "loaded: " + filepath.Base(p)
+		m.status = "loaded: " + filepath.Base(p) +
+			fmt.Sprintf("  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 	case ".csv":
 		pts, bb, err := geom.LoadCSV(p)
 		if err != nil {
@@ -67,7 +69,8 @@ func (m *Model) loadPath(p string) {
 			return
 		}
 		m.points, m.lines, m.polygons, m.bbox = pts, nil, nil, bb
-		m.status = "loaded: " + filepath.Base(p)
+		m.status = "loaded: " + filepath.Base(p) +
+			fmt.Sprintf("  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 	case ".kml":
 		pts, bb, err := geom.LoadKML(p)
 		if err != nil {
@@ -75,7 +78,8 @@ func (m *Model) loadPath(p string) {
 			return
 		}
 		m.points, m.lines, m.polygons, m.bbox = pts, nil, nil, bb
-		m.status = "loaded: " + filepath.Base(p)
+		m.status = "loaded: " + filepath.Base(p) +
+			fmt.Sprintf("  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 	case ".wkt":
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -88,7 +92,8 @@ func (m *Model) loadPath(p string) {
 			return
 		}
 		m.points, m.lines, m.polygons, m.bbox = d.Points, d.Lines, d.Polygons, d.BBox
-		m.status = "loaded: " + filepath.Base(p)
+		m.status = "loaded: " + filepath.Base(p) +
+			fmt.Sprintf("  counts: pts=%d ls=%d poly=%d", len(m.points), len(m.lines), len(m.polygons))
 	default:
 		m.status = "unsupported file: " + ext
 	}

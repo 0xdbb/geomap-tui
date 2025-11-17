@@ -50,32 +50,9 @@ func (m Model) View() string {
 	// track map size for inspect (use full area; map canvas has no border)
 	m.mapW = max(8, mapWidth)
 	m.mapH = max(4, mapHeight)
-	var ascii string
-	if m.pasteMode {
-		// size textarea to map area
-		m.ta.SetWidth(m.mapW)
-		m.ta.SetHeight(min(m.mapH, 12))
-		ascii = m.ta.View()
-	} else {
-		ascii = m.renderAsciiMap(m.mapW, m.mapH)
-	}
-	// plain map canvas: no border, no background highlight
-	mapView := lipgloss.NewStyle().Width(mapWidth).Height(mapHeight).Render(ascii)
-
-	// Build inspect popup box (center-left overlay, not in map column)
-	popup := ""
-	if m.inspectPopup != "" {
-		maxPopupW := min(48, contentWidth/2)
-		if maxPopupW < 20 {
-			maxPopupW = 20
-		}
-		box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).MaxWidth(maxPopupW).Render(m.inspectPopup)
-		// approximate vertical center within content area
-		popup = lipgloss.Place(contentWidth, contentHeight, lipgloss.Left, lipgloss.Center, box)
-	}
-
-	// Attributes overlay (floating), independent of sidebar
+	var mapView string
 	if m.showAttrs {
+		// Render attributes table centered in the map area
 		// infer a reasonable width from columns
 		colW := 0
 		for _, c := range m.tbl.Columns() {
@@ -84,16 +61,34 @@ func (m Model) View() string {
 		if colW == 0 {
 			colW = min(60, contentWidth-6)
 		}
-		maxW := min(contentWidth-4, max(32, colW))
+		maxW := min(mapWidth, max(32, colW))
 		m.tbl.SetWidth(maxW - 4)
-		m.tbl.SetHeight(min(contentHeight-6, 20))
+		m.tbl.SetHeight(min(mapHeight-2, 20))
 		attrsBox := boxStyle.Width(maxW).Render(m.tbl.View())
-		overlay := lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, attrsBox)
-		if popup == "" {
-			popup = overlay
+		mapView = lipgloss.Place(mapWidth, mapHeight, lipgloss.Center, lipgloss.Center, attrsBox)
+	} else {
+		var ascii string
+		if m.pasteMode {
+			// size textarea to map area
+			m.ta.SetWidth(m.mapW)
+			m.ta.SetHeight(min(m.mapH, 12))
+			ascii = m.ta.View()
 		} else {
-			popup = lipgloss.JoinVertical(lipgloss.Left, popup, overlay)
+			ascii = m.renderAsciiMap(m.mapW, m.mapH)
 		}
+		// plain map canvas: no border, no background highlight
+		mapView = lipgloss.NewStyle().Width(mapWidth).Height(mapHeight).Render(ascii)
+	}
+
+	// Build inspect popup box (center-left overlay, not in map column)
+	popup := ""
+	if m.inspectPopup != "" && !m.showAttrs {
+		maxPopupW := min(48, contentWidth/2)
+		if maxPopupW < 20 {
+			maxPopupW = 20
+		}
+		box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).MaxWidth(maxPopupW).Render(m.inspectPopup)
+		popup = lipgloss.Place(contentWidth, contentHeight, lipgloss.Left, lipgloss.Center, box)
 	}
 
 	// Body row
