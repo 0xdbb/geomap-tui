@@ -7,7 +7,7 @@ Includes a toggleable file explorer, ASCII map view, and optional spatial index 
 
 ### Demo
 
-[![Watch the demo](https://ik.imagekit.io/routing/screenshot-2025-11-16_22-05-05.png)](https://ik.imagekit.io/routing/screenrecording-2025-11-17_15-45-38.mp4)
+[![Watch the demo](https://ik.imagekit.io/routing/screenshot-2025-11-16_22-05-05.png](https://youtu.be/OZKMqFq0YLc)
 
 ### Features
 
