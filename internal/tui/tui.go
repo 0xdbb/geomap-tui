@@ -1,13 +1,16 @@
+//go:build legacy
+// +build legacy
+
 package tui
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	list "github.com/charmbracelet/bubbles/list"
+	table "github.com/charmbracelet/bubbles/table"
 	textarea "github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -57,11 +60,174 @@ type Model struct {
 	inspectPopup string
 
 	// hover state
-	hovering bool
-	hoverCellX int
-	hoverCellY int
-	hoverMicX int
-	hoverMicY int
+	hovering    bool
+	hoverCellX  int
+	hoverCellY  int
+	hoverMicX   int
+	hoverMicY   int
+	hoverHasGeo bool
+	hoverLon    float64
+	hoverLat    float64
+
+	// attributes table
+	showAttrs bool
+	tbl       table.Model
+	attrCols  []string
+	attrRows  []table.Row
+}
+
+// cellToLonLat converts a map cell coordinate back to lon/lat using bbox, zoom, and pan.
+func (m Model) cellToLonLat(cx, cy, w, h int) (float64, float64, bool) {
+	if !(m.bbox.MaxX > m.bbox.MinX && m.bbox.MaxY > m.bbox.MinY) {
+		return 0, 0, false
+	}
+	if w <= 1 || h <= 1 {
+		return 0, 0, false
+	}
+	zx := float64(cx-m.offsetX) / float64(w-1)
+	zy := 1.0 - float64(cy-m.offsetY)/float64(h-1)
+	nx := 0.5 + (zx-0.5)/m.zoom
+	ny := 0.5 + (zy-0.5)/m.zoom
+	lon := m.bbox.MinX + nx*(m.bbox.MaxX-m.bbox.MinX)
+	lat := m.bbox.MinY + ny*(m.bbox.MaxY-m.bbox.MinY)
+	return lon, lat, true
+}
+
+// refreshAttrsFromCurrent rebuilds the table columns/rows from the currently selected path
+func (m *Model) refreshAttrsFromCurrent() {
+	cols, rows := m.buildAttributes()
+	// map to bubbles table columns/rows
+	tcols := make([]table.Column, 0, len(cols)+1)
+	tcols = append(tcols, table.Column{Title: "#", Width: 4})
+	maxColW := 24
+	for _, c := range cols {
+		w := len(c) + 2
+		if w > maxColW {
+			w = maxColW
+		}
+		tcols = append(tcols, table.Column{Title: c, Width: w})
+	}
+	trows := make([]table.Row, 0, len(rows))
+	for i, r := range rows {
+		row := make([]string, 0, len(r)+1)
+		row = append(row, fmt.Sprintf("%d", i+1))
+		row = append(row, r...)
+		trows = append(trows, table.Row(row))
+	}
+	m.tbl.SetColumns(tcols)
+	m.tbl.SetRows(trows)
+}
+
+// buildAttributes inspects the current dataset and returns (columns, rows)
+func (m *Model) buildAttributes() ([]string, [][]string) {
+	p := m.selPath
+	if p == "" {
+		return []string{"lon", "lat"}, [][]string{}
+	}
+	ext := strings.ToLower(filepath.Ext(p))
+	switch ext {
+	case ".geojson", ".json":
+		return buildAttrsGeoJSON(p)
+	case ".csv":
+		return buildAttrsCSV(p)
+	default:
+		// fallback: just bbox/summary as a single-row table
+		cols := []string{"name", "path", "bbox", "points", "lines", "polygons"}
+		vals := []string{filepath.Base(p), p, fmt.Sprintf("[%.5f,%.5f,%.5f,%.5f]", m.bbox.MinX, m.bbox.MinY, m.bbox.MaxX, m.bbox.MaxY), fmt.Sprintf("%d", len(m.points)), fmt.Sprintf("%d", len(m.lines)), fmt.Sprintf("%d", len(m.polygons))}
+		return cols, [][]string{vals}
+	}
+}
+
+// buildAttrsGeoJSON collects properties across all features and unions the keys
+func buildAttrsGeoJSON(path string) ([]string, [][]string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return []string{}, [][]string{}
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return []string{}, [][]string{}
+	}
+	// collect features array
+	var features []any
+	if t, _ := raw["type"].(string); t == "FeatureCollection" {
+		if fs, ok := raw["features"].([]any); ok {
+			features = fs
+		}
+	} else if t == "Feature" {
+		features = []any{raw}
+	} else {
+		// geometry only; no attributes
+		return []string{"lon", "lat"}, [][]string{}
+	}
+	// union property keys
+	order := []string{}
+	seen := map[string]bool{}
+	propsList := make([]map[string]any, 0, len(features))
+	for _, f := range features {
+		fm, ok := f.(map[string]any)
+		if !ok {
+			continue
+		}
+		pm, _ := fm["properties"].(map[string]any)
+		propsList = append(propsList, pm)
+		for k := range pm {
+			if !seen[k] {
+				seen[k] = true
+				order = append(order, k)
+			}
+		}
+	}
+	// rows
+	rows := make([][]string, 0, len(propsList))
+	for _, pm := range propsList {
+		vals := make([]string, 0, len(order))
+		for _, k := range order {
+			v := pm[k]
+			switch t := v.(type) {
+			case nil:
+				vals = append(vals, "")
+			case string:
+				vals = append(vals, t)
+			case float64:
+				vals = append(vals, fmt.Sprintf("%g", t))
+			case bool:
+				if t {
+					vals = append(vals, "true")
+				} else {
+					vals = append(vals, "false")
+				}
+			default:
+				bs, _ := json.Marshal(t)
+				vals = append(vals, string(bs))
+			}
+		}
+		rows = append(rows, vals)
+	}
+	return order, rows
+}
+
+// buildAttrsCSV returns header as columns and each row as values
+func buildAttrsCSV(path string) ([]string, [][]string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return []string{}, [][]string{}
+	}
+	defer f.Close()
+	r := csv.NewReader(f)
+	r.TrimLeadingSpace = true
+	recs, err := r.ReadAll()
+	if err != nil || len(recs) == 0 {
+		return []string{}, [][]string{}
+	}
+	header := recs[0]
+	rows := make([][]string, 0, len(recs)-1)
+	for _, row := range recs[1:] {
+		vals := make([]string, len(header))
+		copy(vals, row)
+		rows = append(rows, vals)
+	}
+	return header, rows
 }
 
 func abs(v int) int {
@@ -96,6 +262,9 @@ func New() Model {
 	m.ta.CharLimit = 0
 	m.ta.SetWidth(50)
 	m.ta.SetHeight(6)
+	// attributes table setup (columns will be inferred per dataset)
+	m.tbl = table.New(table.WithFocused(true))
+	m.tbl.SetHeight(12)
 	m.refreshDir()
 	return m
 }
@@ -206,6 +375,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "h":
 			m.helpVisible = !m.helpVisible
+		case "a":
+			m.showAttrs = !m.showAttrs
+			if m.showAttrs {
+				m.refreshAttrsFromCurrent()
+			}
 		case "i":
 			lon, lat, ok := m.inspectNearest()
 			if ok {
@@ -254,11 +428,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// track hover over map area
 		// compute map origin and size (must match View layout)
 		sidebarWidth := 0
-		if m.showSidebar { sidebarWidth = 28 }
+		if m.showSidebar {
+			sidebarWidth = 28
+		}
 		headerHeight := 1
 		footerHeight := 2
 		contentHeight := m.height - headerHeight - footerHeight
-		if contentHeight < 4 { contentHeight = 4 }
+		if contentHeight < 4 {
+			contentHeight = 4
+		}
 		contentWidth := max(10, m.width)
 
 		// Update list size with accurate content height when sidebar visible
@@ -267,9 +445,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		mapWidth := contentWidth - sidebarWidth - 1
-		if mapWidth < 10 { mapWidth = 10 }
+		if mapWidth < 10 {
+			mapWidth = 10
+		}
 		mapHeight := contentHeight
-		mapOriginX := sidebarWidth + func() int { if m.showSidebar { return 1 } ; return 0 }()
+		mapOriginX := sidebarWidth + func() int {
+			if m.showSidebar {
+				return 1
+			}
+			return 0
+		}()
 		mapOriginY := headerHeight
 		// mouse cell within map?
 		cx, cy := msg.X, msg.Y
@@ -277,6 +462,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hovering = true
 			m.hoverCellX = cx - mapOriginX
 			m.hoverCellY = cy - mapOriginY
+			// compute lon/lat for footer
+			if lon, lat, ok := m.cellToLonLat(m.hoverCellX, m.hoverCellY, mapWidth, mapHeight); ok {
+				m.hoverHasGeo = true
+				m.hoverLon = lon
+				m.hoverLat = lat
+			} else {
+				m.hoverHasGeo = false
+			}
 			// find nearest vertex (points + line vertices + polygon vertices) using micro coords
 			hxMic := m.hoverCellX * 2
 			hyMic := m.hoverCellY * 4
@@ -285,17 +478,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// points
 			for _, p := range m.points {
 				mx, my, ok := m.screenXYMicro(p[0], p[1], mapWidth, mapHeight)
-				if !ok { continue }
-				dx := mx - hxMic; dy := my - hyMic; d := dx*dx + dy*dy
-				if d < best { best = d; bx, by = mx, my }
+				if !ok {
+					continue
+				}
+				dx := mx - hxMic
+				dy := my - hyMic
+				d := dx*dx + dy*dy
+				if d < best {
+					best = d
+					bx, by = mx, my
+				}
 			}
 			// lines
 			for _, ls := range m.lines {
 				for _, p := range ls {
 					mx, my, ok := m.screenXYMicro(p[0], p[1], mapWidth, mapHeight)
-					if !ok { continue }
-					dx := mx - hxMic; dy := my - hyMic; d := dx*dx + dy*dy
-					if d < best { best = d; bx, by = mx, my }
+					if !ok {
+						continue
+					}
+					dx := mx - hxMic
+					dy := my - hyMic
+					d := dx*dx + dy*dy
+					if d < best {
+						best = d
+						bx, by = mx, my
+					}
 				}
 			}
 			// polygons
@@ -303,9 +510,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				for _, ring := range poly {
 					for _, p := range ring {
 						mx, my, ok := m.screenXYMicro(p[0], p[1], mapWidth, mapHeight)
-						if !ok { continue }
-						dx := mx - hxMic; dy := my - hyMic; d := dx*dx + dy*dy
-						if d < best { best = d; bx, by = mx, my }
+						if !ok {
+							continue
+						}
+						dx := mx - hxMic
+						dy := my - hyMic
+						d := dx*dx + dy*dy
+						if d < best {
+							best = d
+							bx, by = mx, my
+						}
 					}
 				}
 			}
@@ -353,7 +567,6 @@ func (m Model) View() string {
 	// Sidebar
 	var sidebar string
 	if m.showSidebar {
-		// fixed sidebar without background highlight
 		sidebar = lipgloss.NewStyle().Width(sidebarWidth).Render(m.l.View())
 	}
 
@@ -383,10 +596,34 @@ func (m Model) View() string {
 	popup := ""
 	if m.inspectPopup != "" {
 		maxPopupW := min(48, contentWidth/2)
-		if maxPopupW < 20 { maxPopupW = 20 }
+		if maxPopupW < 20 {
+			maxPopupW = 20
+		}
 		box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).MaxWidth(maxPopupW).Render(m.inspectPopup)
 		// approximate vertical center within content area
 		popup = lipgloss.Place(contentWidth, contentHeight, lipgloss.Left, lipgloss.Center, box)
+	}
+
+	// Attributes overlay (floating), independent of sidebar
+	if m.showAttrs {
+		// infer a reasonable width from columns
+		colW := 0
+		for _, c := range m.tbl.Columns() {
+			colW += c.Width + 3
+		}
+		if colW == 0 {
+			colW = min(60, contentWidth-6)
+		}
+		maxW := min(contentWidth-4, max(32, colW))
+		m.tbl.SetWidth(maxW - 4)
+		m.tbl.SetHeight(min(contentHeight-6, 20))
+		attrsBox := boxStyle.Width(maxW).Render(m.tbl.View())
+		overlay := lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, attrsBox)
+		if popup == "" {
+			popup = overlay
+		} else {
+			popup = lipgloss.JoinVertical(lipgloss.Left, popup, overlay)
+		}
 	}
 
 	// Body row
@@ -401,7 +638,15 @@ func (m Model) View() string {
 	// Footer / help
 	help := m.renderHelp()
 	status := dimStyle.Render(" " + m.status + " ")
-	footer := lipgloss.NewStyle().Width(contentWidth).Render(lipgloss.JoinHorizontal(lipgloss.Bottom, status, help))
+	// mouse coords at bottom-right
+	coords := ""
+	if m.hoverHasGeo {
+		coords = dimStyle.Render(fmt.Sprintf("  lon=%.5f lat=%.5f  ", m.hoverLon, m.hoverLat))
+	}
+	left := lipgloss.JoinHorizontal(lipgloss.Bottom, status, help)
+	spacerW := max(0, contentWidth-lipgloss.Width(left)-lipgloss.Width(coords))
+	right := lipgloss.Place(spacerW+lipgloss.Width(coords), 1, lipgloss.Right, lipgloss.Center, coords)
+	footer := lipgloss.NewStyle().Width(contentWidth).Render(lipgloss.JoinHorizontal(lipgloss.Bottom, left, right))
 
 	// Compose UI with popup overlay between header and body
 	ui := lipgloss.JoinVertical(lipgloss.Left, header, popup, body, footer)
@@ -436,14 +681,18 @@ func (m Model) renderAsciiMap(w, h int) string {
 						continue
 					}
 					mx, my, okm := m.screenXYMicro(p[0], p[1], w, h)
-					if !okm { continue }
+					if !okm {
+						continue
+					}
 					sp = append(sp, [2]int{sx, sy})
 					sm = append(sm, [2]int{mx, my})
 				}
 				if len(sp) >= 3 {
 					rings = append(rings, sp)
 				}
-				if len(sm) >= 3 { ringsMic = append(ringsMic, sm) }
+				if len(sm) >= 3 {
+					ringsMic = append(ringsMic, sm)
+				}
 			}
 			if len(rings) == 0 {
 				continue
@@ -473,7 +722,9 @@ func (m Model) renderAsciiMap(w, h int) string {
 						for i := 0; i+1 < len(xs); i += 2 {
 							xstart := xs[i]
 							xend := xs[i+1]
-							if xstart > xend { xstart, xend = xend, xstart }
+							if xstart > xend {
+								xstart, xend = xend, xstart
+							}
 							for xMic := max(0, xstart); xMic <= xend; xMic++ {
 								br.setPixel(xMic, yMic)
 							}
@@ -484,7 +735,9 @@ func (m Model) renderAsciiMap(w, h int) string {
 			// draw edges (high-res)
 			for idx, ring := range ringsMic {
 				_ = ring
-				if idx >= len(ringsMic) { continue }
+				if idx >= len(ringsMic) {
+					continue
+				}
 				r := ringsMic[idx]
 				for i := 0; i < len(r); i++ {
 					a := r[i]
@@ -499,7 +752,9 @@ func (m Model) renderAsciiMap(w, h int) string {
 	if m.showPoints && len(m.points) > 0 && m.bbox.MaxX > m.bbox.MinX && m.bbox.MaxY > m.bbox.MinY {
 		for _, p := range m.points {
 			mx, my, ok := m.screenXYMicro(p[0], p[1], w, h)
-			if !ok { continue }
+			if !ok {
+				continue
+			}
 			br.setPixel(mx, my)
 		}
 	}
@@ -510,8 +765,12 @@ func (m Model) renderAsciiMap(w, h int) string {
 			var prev *[2]int
 			for _, p := range ls {
 				mx, my, ok := m.screenXYMicro(p[0], p[1], w, h)
-				if !ok { continue }
-				if prev != nil { br.drawLineMicro(prev[0], prev[1], mx, my) }
+				if !ok {
+					continue
+				}
+				if prev != nil {
+					br.drawLineMicro(prev[0], prev[1], mx, my)
+				}
 				prev = &[2]int{mx, my}
 			}
 		}
@@ -519,11 +778,18 @@ func (m Model) renderAsciiMap(w, h int) string {
 	// Composite braille overlay onto base lines
 	braLines := br.toLines()
 	for y := 0; y < h && y < len(braLines); y++ {
-		if len(braLines[y]) == 0 { continue }
+		if len(braLines[y]) == 0 {
+			continue
+		}
 		base := []rune(lines[y])
 		over := []rune(braLines[y])
 		for x := 0; x < len(base) && x < len(over); x++ {
-			if over[x] != ' ' { base[x] = over[x] }
+			if over[x] != ' ' {
+				base[x] = over[x]
+			}
+			if over[x] != ' ' {
+				base[x] = over[x]
+			}
 		}
 		lines[y] = string(base)
 	}
@@ -548,7 +814,9 @@ func (m Model) renderAsciiMap(w, h int) string {
 
 // screenXYMicro maps lon/lat into a 2x4 microgrid per cell for braille rendering.
 func (m Model) screenXYMicro(lon, lat float64, w, h int) (int, int, bool) {
-	if !(m.bbox.MaxX > m.bbox.MinX && m.bbox.MaxY > m.bbox.MinY) { return 0, 0, false }
+	if !(m.bbox.MaxX > m.bbox.MinX && m.bbox.MaxY > m.bbox.MinY) {
+		return 0, 0, false
+	}
 	nx := (lon - m.bbox.MinX) / (m.bbox.MaxX - m.bbox.MinX)
 	ny := (lat - m.bbox.MinY) / (m.bbox.MaxY - m.bbox.MinY)
 	zx := 0.5 + (nx-0.5)*m.zoom
@@ -562,27 +830,51 @@ func (m Model) screenXYMicro(lon, lat float64, w, h int) (int, int, bool) {
 
 // braille buffer implementation
 type brailleBuf struct {
-	w, h int // in cells
-	m [][]uint8 // per-cell 8-bit mask
+	w, h int       // in cells
+	m    [][]uint8 // per-cell 8-bit mask
 }
 
 func newBrailleBuf(w, h int) *brailleBuf {
 	m := make([][]uint8, h)
-	for i := range m { m[i] = make([]uint8, w) }
-	return &brailleBuf{w:w, h:h, m:m}
+	for i := range m {
+		m[i] = make([]uint8, w)
+	}
+	return &brailleBuf{w: w, h: h, m: m}
 }
 
 // setPixel sets a micro-pixel at micro coords (2x4 per cell)
 func (b *brailleBuf) setPixel(mx, my int) {
-	if mx < 0 || my < 0 { return }
+	if mx < 0 || my < 0 {
+		return
+	}
 	cx, rx := mx/2, mx%2
 	cy, ry := my/4, my%4
-	if cy < 0 || cy >= b.h || cx < 0 || cx >= b.w { return }
+	if cy < 0 || cy >= b.h || cx < 0 || cx >= b.w {
+		return
+	}
 	var bit uint8
 	if rx == 0 {
-		switch ry { case 0: bit=0x01; case 1: bit=0x02; case 2: bit=0x04; case 3: bit=0x40 }
+		switch ry {
+		case 0:
+			bit = 0x01
+		case 1:
+			bit = 0x02
+		case 2:
+			bit = 0x04
+		case 3:
+			bit = 0x40
+		}
 	} else {
-		switch ry { case 0: bit=0x08; case 1: bit=0x10; case 2: bit=0x20; case 3: bit=0x80 }
+		switch ry {
+		case 0:
+			bit = 0x08
+		case 1:
+			bit = 0x10
+		case 2:
+			bit = 0x20
+		case 3:
+			bit = 0x80
+		}
 	}
 	b.m[cy][cx] |= bit
 }
@@ -591,17 +883,29 @@ func (b *brailleBuf) setPixel(mx, my int) {
 func (b *brailleBuf) drawLineMicro(x0, y0, x1, y1 int) {
 	dx := abs(x1 - x0)
 	sx := -1
-	if x0 < x1 { sx = 1 }
+	if x0 < x1 {
+		sx = 1
+	}
 	dy := -abs(y1 - y0)
 	sy := -1
-	if y0 < y1 { sy = 1 }
+	if y0 < y1 {
+		sy = 1
+	}
 	err := dx + dy
 	for {
 		b.setPixel(x0, y0)
-		if x0 == x1 && y0 == y1 { break }
-		e2 := 2*err
-		if e2 >= dy { err += dy; x0 += sx }
-		if e2 <= dx { err += dx; y0 += sy }
+		if x0 == x1 && y0 == y1 {
+			break
+		}
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			x0 += sx
+		}
+		if e2 <= dx {
+			err += dx
+			y0 += sy
+		}
 	}
 }
 
@@ -611,7 +915,11 @@ func (b *brailleBuf) toLines() []string {
 		row := make([]rune, b.w)
 		for x := 0; x < b.w; x++ {
 			mask := b.m[y][x]
-			if mask == 0 { row[x] = ' ' } else { row[x] = rune(0x2800 + int(mask)) }
+			if mask == 0 {
+				row[x] = ' '
+			} else {
+				row[x] = rune(0x2800 + int(mask))
+			}
 		}
 		out[y] = string(row)
 	}
@@ -628,6 +936,7 @@ func (m Model) renderHelp() string {
 		"Tab sidebar",
 		"Enter open",
 		"p paste",
+		"a attrs",
 		"i inspect",
 		"l layers",
 		"h help",
