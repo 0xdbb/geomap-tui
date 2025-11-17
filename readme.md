@@ -5,6 +5,10 @@ A terminal-based geospatial file viewer in Go.
 Visualize GeoJSON files directly in your terminal.
 Includes a toggleable file explorer, ASCII map view, and optional spatial index visualization in a separate binary.
 
+### Demo
+
+[![Watch the demo](https://ik.imagekit.io/routing/screenshot-2025-11-16_22-05-05.png)](https://ik.imagekit.io/routing/screenrecording-2025-11-17_15-45-38.mp4)
+
 ### Features
 
 - View spatial files (currently supports only .geojson) in ASCII
@@ -27,6 +31,7 @@ Includes a toggleable file explorer, ASCII map view, and optional spatial index 
 | `l`       | Toggle layer visibility                 |
 | `q`       | Quit the application                    |
 | `h`       | Show help / keybindings                 |
+| `p`       | Paste wkt to render                  |
 
 ### Quickstart
 
